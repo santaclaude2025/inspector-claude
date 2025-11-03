@@ -1,26 +1,77 @@
-# Claude Code Analytics
+# 🔍 Inspector Claude
 
-## Overview
+Web UI for exploring and analyzing your local Claude Code session data.
 
-This is a web application that indexes local Claude Code data (typically stored in ~/.claude) and provides a Web UI for exploring that data.
+## ✨ Features
 
+- 🔎 Filter by message count, tokens, git branch, and date
+- 📝 View complete session messages and interactions
+- 🛠️ Expandable tool use/result blocks
+- 💭 See Claude's internal thinking process
+- 📊 Track token usage
+- ⚡ Lazy loading with pagination
 
-## Use cases
+## 📋 Requirements
 
-Primary use case will be search.
+- Python 3.10+
+- [UV](https://docs.astral.sh/uv/) package manager
+- Claude Code session data in `~/.claude/projects/`
 
-Examples:
+## 🚀 Installation
 
-- Show sessions that lasted more than 10 messages.
-- Show sessions where total token usage is between A, B.
-- Show sessions by git branch name.
+1. Clone the repository:
+```bash
+git clone https://github.com/santaclaude2025/inspector-claude.git
+cd inspector-claude
+```
 
-For each session shown, user should be able to explore all associated data for that session.
+2. Install dependencies:
+```bash
+uv sync
+```
 
-## Design
+## 💻 Usage
 
-Overarching priority is simplicity, and speed of implementation.  We will use the reflex framework (reflex.dev).  This allows the entire full stack application to be implemented in Python only.
+Run the application with:
+```bash
+uv run reflex run
+```
 
-### On data
+The web interface will be available at `http://localhost:3000`.
 
-We will NOT replicate the data from ~/.claude/.  Instead we will index it at application startup in memory.  This won't scale to large datasets, but it's good enough to start with.
+## 🏗️ Architecture
+
+Built with Python and Reflex framework - the entire application is written in Python, with the frontend automatically generated.
+
+**Data Flow:**
+- Session metadata is indexed at startup from `~/.claude/projects/*.jsonl`
+- Message content is loaded on-demand for selected sessions
+
+## 📁 Project Structure
+
+```
+inspector_claude/
+├── inspector_claude/
+│   ├── __init__.py              # Package initialization
+│   ├── indexer.py               # Data loading and session indexing
+│   └── inspector_claude.py      # Main Reflex UI application
+├── .web/                        # Generated frontend code (React)
+├── pyproject.toml               # Python dependencies
+├── rxconfig.py                  # Reflex configuration
+└── README.md                    # This file
+```
+
+## 🔧 Development
+
+Key components:
+- `indexer.py` - Reads and parses JSONL session files
+- `inspector_claude.py` - Application state and UI components
+
+Session data is indexed in memory at startup for simplicity.
+
+## 🚧 Future Enhancements
+
+See [TODO.md](TODO.md) for planned features including:
+- Image content support
+- Message sender type filters
+- Session compaction handling
