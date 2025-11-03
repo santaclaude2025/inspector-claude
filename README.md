@@ -2,6 +2,8 @@
 
 Web UI for exploring and analyzing your local Claude Code session data.
 
+![Inspector Claude UI](assets/screenshot.png)
+
 ## ✨ Features
 
 - 🔎 Filter by message count, tokens, git branch, and date
