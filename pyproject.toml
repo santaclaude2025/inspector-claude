@@ -1,0 +1,9 @@
+[project]
+name = "inspector-claude"
+version = "0.1.0"
+description = "Web UI for exploring Claude Code session data"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "reflex>=0.8.17",
+]
