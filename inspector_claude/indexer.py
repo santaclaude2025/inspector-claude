@@ -55,6 +55,15 @@ def normalize_content_block(block: Dict[str, Any]) -> Dict[str, Any]:
         if 'tool_use_id' in normalized:
             normalized['tool_use_id_short'] = str(normalized['tool_use_id'])[:8]
 
+    # Flatten image source structure for easier UI rendering
+    if block_type == 'image':
+        if 'source' in normalized and isinstance(normalized['source'], dict):
+            source = normalized['source']
+            normalized['source_type'] = source.get('type', 'unknown')
+            normalized['source_media_type'] = source.get('media_type', 'image/png')
+            normalized['source_data'] = source.get('data', '')
+            normalized['source_url'] = source.get('url', '')
+
     return normalized
 
 
@@ -237,7 +246,7 @@ def load_sessions(claude_dir: Path = Path.home() / ".claude", load_messages: boo
                                                 block_type = block.get('type')
 
                                                 # Store only known block types that we can render
-                                                if block_type in ('text', 'thinking', 'tool_use', 'tool_result', 'file-history-snapshot'):
+                                                if block_type in ('text', 'thinking', 'tool_use', 'tool_result', 'file-history-snapshot', 'image'):
                                                     if load_messages:  # Only store blocks if loading all messages
                                                         msg.content_blocks.append(normalize_content_block(block))
 
@@ -331,7 +340,7 @@ def load_session_messages(session_id: str, project_dir: str, claude_dir: Path = 
                                     block_type = block.get('type')
 
                                     # Store only known block types that we can render
-                                    if block_type in ('text', 'thinking', 'tool_use', 'tool_result', 'file-history-snapshot'):
+                                    if block_type in ('text', 'thinking', 'tool_use', 'tool_result', 'file-history-snapshot', 'image'):
                                         msg.content_blocks.append(normalize_content_block(block))
 
                                     # Also collect text for legacy content field

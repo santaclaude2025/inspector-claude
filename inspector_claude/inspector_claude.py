@@ -270,6 +270,14 @@ class State(rx.State):
         if self.current_page > 1:
             self.current_page -= 1
 
+    def first_page(self):
+        """Go to first page of messages"""
+        self.current_page = 1
+
+    def last_page(self):
+        """Go to last page of messages"""
+        self.current_page = self.total_pages
+
     def clear_selection(self):
         """Clear selected session"""
         self.selected_session_id = None
@@ -504,6 +512,56 @@ def render_file_history_block(block: Dict) -> rx.Component:
     )
 
 
+def render_image_block(block: Dict) -> rx.Component:
+    """Render an image content block"""
+    # Image source data is flattened by the indexer into top-level fields:
+    # - source_type: "base64" or "url"
+    # - source_media_type: MIME type (e.g., "image/png")
+    # - source_data: base64 encoded data
+    # - source_url: URL for url-type images
+
+    # Use conditional rendering based on source type
+    content = rx.cond(
+        block["source_type"] == "base64",
+        # Base64 image
+        rx.image(
+            src=f"data:{block['source_media_type']};base64,{block['source_data']}",
+            alt="Content image",
+            max_width="100%",
+            max_height="600px",
+            object_fit="contain",
+            border_radius="4px"
+        ),
+        rx.cond(
+            block["source_type"] == "url",
+            # URL image
+            rx.image(
+                src=block["source_url"],
+                alt="Content image",
+                max_width="100%",
+                max_height="600px",
+                object_fit="contain",
+                border_radius="4px"
+            ),
+            # Fallback for unknown source type
+            rx.text(
+                f"[Image - unsupported source type]",
+                size="2",
+                color="#999",
+                font_style="italic"
+            )
+        )
+    )
+
+    return styled_content_block(
+        badge_text="Image",
+        badge_color="violet",
+        content=content,
+        background_color="#faf5ff",
+        border_color="#e9d5ff"
+    )
+
+
 def render_unknown_block(block: Dict) -> rx.Component:
     """Render an unknown content block type with generic styling"""
     block_type = block.get("type", "unknown")
@@ -547,8 +605,12 @@ def render_content_block(block: Dict) -> rx.Component:
                     rx.cond(
                         block["type"] == "file-history-snapshot",
                         render_file_history_block(block),
-                        # Unknown block type
-                        rx.box()
+                        rx.cond(
+                            block["type"] == "image",
+                            render_image_block(block),
+                            # Unknown block type
+                            rx.box()
+                        )
                     )
                 )
             )
@@ -610,10 +672,11 @@ def session_detail() -> rx.Component:
             rx.hstack(
                 rx.heading("Messages", size="4"),
                 rx.spacer(),
-                rx.text(
-                    f"Page {State.current_page} of {State.total_pages}",
+                rx.button(
+                    "First",
+                    on_click=State.first_page,
                     size="2",
-                    color="gray"
+                    disabled=State.current_page == 1
                 ),
                 rx.button(
                     "Previous",
@@ -621,9 +684,20 @@ def session_detail() -> rx.Component:
                     size="2",
                     disabled=State.current_page == 1
                 ),
+                rx.text(
+                    f"Page {State.current_page} of {State.total_pages}",
+                    size="2",
+                    color="gray"
+                ),
                 rx.button(
                     "Next",
                     on_click=State.next_page,
+                    size="2",
+                    disabled=State.current_page >= State.total_pages
+                ),
+                rx.button(
+                    "Last",
+                    on_click=State.last_page,
                     size="2",
                     disabled=State.current_page >= State.total_pages
                 ),
