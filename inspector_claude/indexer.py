@@ -6,6 +6,11 @@ from typing import Dict, List, Optional, Any
 from dataclasses import dataclass, field
 from datetime import datetime
 
+# Constants for session description
+MAX_DESCRIPTION_LENGTH = 100
+TRUNCATION_SUFFIX = "..."
+CONTENT_PREVIEW_LENGTH = 300  # Used for tool result previews
+
 
 def normalize_content_block(block: Dict[str, Any]) -> Dict[str, Any]:
     """Normalize a content block by converting complex objects to strings for UI display"""
@@ -36,11 +41,11 @@ def normalize_content_block(block: Dict[str, Any]) -> Dict[str, Any]:
             elif isinstance(content, dict):
                 normalized['content'] = json.dumps(content, indent=2)
 
-        # Create a preview version (first 300 chars) for UI display
+        # Create a preview version for UI display
         if 'content' in normalized:
             content_str = str(normalized['content'])
-            if len(content_str) > 300:
-                normalized['content_preview'] = content_str[:300] + "..."
+            if len(content_str) > CONTENT_PREVIEW_LENGTH:
+                normalized['content_preview'] = content_str[:CONTENT_PREVIEW_LENGTH] + TRUNCATION_SUFFIX
                 normalized['is_long'] = True
             else:
                 normalized['content_preview'] = content_str
@@ -115,12 +120,8 @@ class Session:
 
         # Fall back to first user message
         for msg in self.messages:
-            # Debug: print message info
-            if msg.type == 'user':
-                print(f"Found user message: type={msg.type}, role={msg.role}, has_content={bool(msg.content)}, content_preview={msg.content[:50] if msg.content else 'None'}")
-
             if msg.type == 'user' and msg.content:
-                # Get first line or first 100 chars, whichever is shorter
+                # Get first line or first MAX_DESCRIPTION_LENGTH chars, whichever is shorter
                 content = msg.content.strip()
                 if '\n' in content:
                     first_line = content.split('\n')[0].strip()
@@ -128,8 +129,8 @@ class Session:
                     first_line = content
 
                 # Truncate if too long
-                if len(first_line) > 100:
-                    return first_line[:97] + "..."
+                if len(first_line) > MAX_DESCRIPTION_LENGTH:
+                    return first_line[:MAX_DESCRIPTION_LENGTH - len(TRUNCATION_SUFFIX)] + TRUNCATION_SUFFIX
                 return first_line
 
         return "Untitled Session"

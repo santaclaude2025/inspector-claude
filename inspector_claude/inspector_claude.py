@@ -15,6 +15,39 @@ DEFAULT_MAX_INPUT_TOKENS = 1000000
 DEFAULT_MIN_OUTPUT_TOKENS = 0
 DEFAULT_MAX_OUTPUT_TOKENS = 1000000
 
+# Mapping of filter attribute names to their default values
+FILTER_DEFAULTS = {
+    'min_messages': DEFAULT_MIN_MESSAGES,
+    'max_messages': DEFAULT_MAX_MESSAGES,
+    'min_tokens': DEFAULT_MIN_TOKENS,
+    'max_tokens': DEFAULT_MAX_TOKENS,
+    'min_input_tokens': DEFAULT_MIN_INPUT_TOKENS,
+    'max_input_tokens': DEFAULT_MAX_INPUT_TOKENS,
+    'min_output_tokens': DEFAULT_MIN_OUTPUT_TOKENS,
+    'max_output_tokens': DEFAULT_MAX_OUTPUT_TOKENS,
+}
+
+# Color scheme constants
+COLORS = {
+    # Selected session highlighting
+    'selected_session_bg': '#d4e3ff',
+    'selected_session_border': '#5b8def',
+    # Content block colors
+    'thinking_bg': '#f5f3ff',
+    'thinking_border': '#e9d5ff',
+    'tool_use_bg': '#f0fdf4',
+    'tool_use_border': '#bbf7d0',
+    'tool_result_bg': '#ecfeff',
+    'tool_result_border': '#a5f3fc',
+    'file_history_bg': '#fff7ed',
+    'file_history_border': '#fdba74',
+    'unknown_bg': '#f9fafb',
+    'unknown_border': '#d1d5db',
+    'session_summary_bg': '#eff6ff',
+    'session_summary_border': '#bfdbfe',
+    'user_message_bg': '#fef08a',
+}
+
 
 class SessionSummary(rx.Base):
     """Summary of a session for display"""
@@ -80,14 +113,10 @@ class State(rx.State):
 
     def reset_filters(self):
         """Reset all filters to their default values"""
-        self.min_messages = DEFAULT_MIN_MESSAGES
-        self.max_messages = DEFAULT_MAX_MESSAGES
-        self.min_tokens = DEFAULT_MIN_TOKENS
-        self.max_tokens = DEFAULT_MAX_TOKENS
-        self.min_input_tokens = DEFAULT_MIN_INPUT_TOKENS
-        self.max_input_tokens = DEFAULT_MAX_INPUT_TOKENS
-        self.min_output_tokens = DEFAULT_MIN_OUTPUT_TOKENS
-        self.max_output_tokens = DEFAULT_MAX_OUTPUT_TOKENS
+        # Reset numeric filters using FILTER_DEFAULTS dictionary
+        for attr_name, default_value in FILTER_DEFAULTS.items():
+            setattr(self, attr_name, default_value)
+        # Reset string filters
         self.branch_filter = ""
         self.start_date_filter = ""
         self.end_date_filter = ""
@@ -98,21 +127,18 @@ class State(rx.State):
         """Count how many filters are currently active (different from defaults)"""
         count = 0
 
-        # Message Count filter (count as 1 if either min or max is different)
-        if self.min_messages != DEFAULT_MIN_MESSAGES or self.max_messages != DEFAULT_MAX_MESSAGES:
-            count += 1
+        # Check range filter pairs (each pair counts as 1 filter if either value differs from default)
+        filter_pairs = [
+            ('min_messages', 'max_messages'),
+            ('min_tokens', 'max_tokens'),
+            ('min_input_tokens', 'max_input_tokens'),
+            ('min_output_tokens', 'max_output_tokens'),
+        ]
 
-        # Total Tokens filter (count as 1 if either min or max is different)
-        if self.min_tokens != DEFAULT_MIN_TOKENS or self.max_tokens != DEFAULT_MAX_TOKENS:
-            count += 1
-
-        # Input Tokens filter (count as 1 if either min or max is different)
-        if self.min_input_tokens != DEFAULT_MIN_INPUT_TOKENS or self.max_input_tokens != DEFAULT_MAX_INPUT_TOKENS:
-            count += 1
-
-        # Output Tokens filter (count as 1 if either min or max is different)
-        if self.min_output_tokens != DEFAULT_MIN_OUTPUT_TOKENS or self.max_output_tokens != DEFAULT_MAX_OUTPUT_TOKENS:
-            count += 1
+        for min_name, max_name in filter_pairs:
+            if (getattr(self, min_name) != FILTER_DEFAULTS[min_name] or
+                getattr(self, max_name) != FILTER_DEFAULTS[max_name]):
+                count += 1
 
         # Branch filter
         if self.branch_filter:
@@ -185,68 +211,22 @@ class State(rx.State):
         filtered.sort(key=lambda s: s.start_time, reverse=True)
         self.filtered_sessions = filtered
 
-    def set_min_messages(self, value: str):
-        """Update minimum message filter"""
-        try:
-            self.min_messages = int(value) if value else 0
-            self.apply_filters()
-        except ValueError:
-            pass
+    def set_numeric_filter(self, filter_name: str, value: str):
+        """Generic method to update any numeric filter
 
-    def set_max_messages(self, value: str):
-        """Update maximum message filter"""
+        Args:
+            filter_name: Name of the filter attribute (e.g., 'min_messages', 'max_tokens')
+            value: String value from input field
+        """
         try:
-            self.max_messages = int(value) if value else 10000
+            # Get default value for this filter
+            default_value = FILTER_DEFAULTS.get(filter_name, 0)
+            # Parse and set the value, using default if empty
+            numeric_value = int(value) if value else default_value
+            setattr(self, filter_name, numeric_value)
             self.apply_filters()
         except ValueError:
-            pass
-
-    def set_min_tokens(self, value: str):
-        """Update minimum token filter"""
-        try:
-            self.min_tokens = int(value) if value else 0
-            self.apply_filters()
-        except ValueError:
-            pass
-
-    def set_max_tokens(self, value: str):
-        """Update maximum token filter"""
-        try:
-            self.max_tokens = int(value) if value else 1000000
-            self.apply_filters()
-        except ValueError:
-            pass
-
-    def set_min_input_tokens(self, value: str):
-        """Update minimum input token filter"""
-        try:
-            self.min_input_tokens = int(value) if value else 0
-            self.apply_filters()
-        except ValueError:
-            pass
-
-    def set_max_input_tokens(self, value: str):
-        """Update maximum input token filter"""
-        try:
-            self.max_input_tokens = int(value) if value else 1000000
-            self.apply_filters()
-        except ValueError:
-            pass
-
-    def set_min_output_tokens(self, value: str):
-        """Update minimum output token filter"""
-        try:
-            self.min_output_tokens = int(value) if value else 0
-            self.apply_filters()
-        except ValueError:
-            pass
-
-    def set_max_output_tokens(self, value: str):
-        """Update maximum output token filter"""
-        try:
-            self.max_output_tokens = int(value) if value else 1000000
-            self.apply_filters()
-        except ValueError:
+            # Invalid input, ignore
             pass
 
     def set_branch_filter(self, value: str):
@@ -302,46 +282,6 @@ class State(rx.State):
         return None
 
     @rx.var
-    def selected_session_description(self) -> str:
-        """Get the description of the currently selected session"""
-        session = self.selected_session
-        if session:
-            return session.description
-        return ""
-
-    @rx.var
-    def selected_session_message_count(self) -> int:
-        """Get the message count of the currently selected session"""
-        session = self.selected_session
-        if session:
-            return session.message_count
-        return 0
-
-    @rx.var
-    def selected_session_total_tokens(self) -> int:
-        """Get the total tokens of the currently selected session"""
-        session = self.selected_session
-        if session:
-            return session.total_tokens
-        return 0
-
-    @rx.var
-    def selected_session_project_path(self) -> str:
-        """Get the project path of the currently selected session"""
-        session = self.selected_session
-        if session:
-            return session.project_path
-        return ""
-
-    @rx.var
-    def selected_session_git_branch(self) -> str:
-        """Get the git branch of the currently selected session"""
-        session = self.selected_session
-        if session:
-            return session.git_branch or "unknown"
-        return "unknown"
-
-    @rx.var
     def total_pages(self) -> int:
         """Get total number of pages for current session"""
         session = self.selected_session
@@ -392,26 +332,54 @@ def session_card(session: SessionSummary) -> rx.Component:
         on_click=lambda: State.select_session(session.session_id),
         style=rx.cond(
             State.selected_session_id == session.session_id,
-            {"background_color": "#d4e3ff", "cursor": "pointer", "border": "2px solid #5b8def"},
+            {"background_color": COLORS['selected_session_bg'], "cursor": "pointer", "border": f"2px solid {COLORS['selected_session_border']}"},
             {"cursor": "pointer", "border": "2px solid transparent"}
         )
     )
 
 
-def session_list() -> rx.Component:
-    """Render the list of sessions"""
-    return rx.vstack(
-        rx.heading(
-            f"Sessions ({State.filtered_sessions.length()})",
-            size="6"
+def styled_content_block(
+    badge_text: str,
+    badge_color: str,
+    content: rx.Component,
+    background_color: str,
+    border_color: str,
+    header_extras: Optional[rx.Component] = None
+) -> rx.Component:
+    """Create a styled content block with consistent styling
+
+    Args:
+        badge_text: Text to display in the badge
+        badge_color: Color scheme for the badge
+        content: The content component to display
+        background_color: Background color for the block
+        border_color: Border color for the block
+        header_extras: Optional additional components for the header (e.g., buttons)
+    """
+    return rx.box(
+        rx.vstack(
+            rx.hstack(
+                rx.badge(badge_text, color_scheme=badge_color, size="1"),
+                header_extras if header_extras else rx.box(),
+                width="100%",
+                align_items="center"
+            ),
+            rx.box(
+                content,
+                width="100%",
+                max_width="100%",
+                overflow_x="auto"
+            ),
+            spacing="2",
+            align_items="start",
+            width="100%"
         ),
-        rx.foreach(
-            State.filtered_sessions,
-            session_card
-        ),
-        spacing="3",
+        padding="12px",
+        border_radius="6px",
+        background_color=background_color,
+        border=f"1px solid {border_color}",
         width="100%",
-        align_items="start"
+        max_width="100%"
     )
 
 
@@ -426,54 +394,38 @@ def render_text_block(block: Dict) -> rx.Component:
 
 def render_thinking_block(block: Dict) -> rx.Component:
     """Render a thinking content block"""
-    return rx.box(
-        rx.vstack(
-            rx.hstack(
-                rx.badge("Thinking", color_scheme="purple", size="1"),
-                rx.spacer(),
-            ),
-            rx.text(block["thinking"], size="2", white_space="pre-wrap", color="#666"),
-            spacing="2",
-            align_items="start"
-        ),
-        padding="12px",
-        border_radius="6px",
-        background_color="#f5f3ff",
-        border="1px solid #e9d5ff",
-        width="100%"
+    content = rx.text(
+        block["thinking"],
+        size="2",
+        white_space="pre-wrap",
+        color="#666"
+    )
+    return styled_content_block(
+        badge_text="Thinking",
+        badge_color="purple",
+        content=content,
+        background_color=COLORS['thinking_bg'],
+        border_color=COLORS['thinking_border']
     )
 
 
 def render_tool_use_block(block: Dict) -> rx.Component:
     """Render a tool_use content block"""
-    return rx.box(
-        rx.vstack(
-            rx.hstack(
-                rx.badge(rx.text("Tool: ", block["name"]), color_scheme="green", size="1"),
-                rx.text("ID: ", block["id_short"], "...", size="1", color="gray"),
-            ),
-            rx.box(
-                rx.text(
-                    block["input"],
-                    size="2",
-                    white_space="pre-wrap",
-                    word_break="break-word",
-                    font_family="monospace"
-                ),
-                width="100%",
-                max_width="100%",
-                overflow_x="auto"
-            ),
-            spacing="2",
-            align_items="start",
-            width="100%"
-        ),
-        padding="12px",
-        border_radius="6px",
-        background_color="#f0fdf4",
-        border="1px solid #bbf7d0",
-        width="100%",
-        max_width="100%"
+    header_extras = rx.text("ID: ", block["id_short"], "...", size="1", color="gray")
+    content = rx.text(
+        block["input"],
+        size="2",
+        white_space="pre-wrap",
+        word_break="break-word",
+        font_family="monospace"
+    )
+    return styled_content_block(
+        badge_text=f"Tool: {block['name']}",
+        badge_color="green",
+        content=content,
+        background_color=COLORS['tool_use_bg'],
+        border_color=COLORS['tool_use_border'],
+        header_extras=header_extras
     )
 
 
@@ -485,138 +437,95 @@ def render_tool_result_block(block: Dict) -> rx.Component:
     is_long = block["is_long"]
     is_expanded = State.expanded_tool_results.contains(tool_use_id)
 
-    return rx.box(
-        rx.vstack(
-            rx.hstack(
-                rx.badge("Tool Result", color_scheme="cyan", size="1"),
-                rx.text("For: ", block["tool_use_id_short"], "...", size="1", color="gray"),
-                rx.spacer(),
-                # Show expand/collapse button only if content is long
-                rx.cond(
-                    is_long,
-                    rx.button(
-                        rx.cond(
-                            is_expanded,
-                            "Show less",
-                            "Show more"
-                        ),
-                        on_click=lambda: State.toggle_tool_result_expansion(tool_use_id),
-                        size="1",
-                        variant="soft",
-                        color_scheme="cyan"
-                    ),
-                    rx.box()
-                ),
-                width="100%",
-                align_items="center"
+    # Build header with ID and optional expand/collapse button
+    header_extras = rx.hstack(
+        rx.text("For: ", block["tool_use_id_short"], "...", size="1", color="gray"),
+        rx.spacer(),
+        rx.cond(
+            is_long,
+            rx.button(
+                rx.cond(is_expanded, "Show less", "Show more"),
+                on_click=lambda: State.toggle_tool_result_expansion(tool_use_id),
+                size="1",
+                variant="soft",
+                color_scheme="cyan"
             ),
-            rx.box(
-                # Show full content if expanded or short, otherwise show preview
-                rx.cond(
-                    is_expanded | ~is_long,
-                    rx.text(
-                        content,
-                        size="2",
-                        white_space="pre-wrap",
-                        word_break="break-word",
-                        font_family="monospace"
-                    ),
-                    rx.text(
-                        content_preview,
-                        size="2",
-                        white_space="pre-wrap",
-                        word_break="break-word",
-                        font_family="monospace",
-                        color="#555"
-                    )
-                ),
-                width="100%",
-                max_width="100%",
-                overflow_x="auto"
-            ),
-            spacing="2",
-            align_items="start",
-            width="100%"
+            rx.box()
+        )
+    )
+
+    # Content with conditional display
+    content_component = rx.cond(
+        is_expanded | ~is_long,
+        rx.text(
+            content,
+            size="2",
+            white_space="pre-wrap",
+            word_break="break-word",
+            font_family="monospace"
         ),
-        padding="12px",
-        border_radius="6px",
-        background_color="#ecfeff",
-        border="1px solid #a5f3fc",
-        width="100%",
-        max_width="100%"
+        rx.text(
+            content_preview,
+            size="2",
+            white_space="pre-wrap",
+            word_break="break-word",
+            font_family="monospace",
+            color="#555"
+        )
+    )
+
+    return styled_content_block(
+        badge_text="Tool Result",
+        badge_color="cyan",
+        content=content_component,
+        background_color=COLORS['tool_result_bg'],
+        border_color=COLORS['tool_result_border'],
+        header_extras=header_extras
     )
 
 
 def render_file_history_block(block: Dict) -> rx.Component:
     """Render a file-history-snapshot content block"""
     # File history blocks typically contain file content or file metadata
-    content = block.get("content", "")
-
-    return rx.box(
-        rx.vstack(
-            rx.hstack(
-                rx.badge("File History Snapshot", color_scheme="orange", size="1"),
-            ),
-            rx.box(
-                rx.text(
-                    content if isinstance(content, str) else str(content),
-                    size="2",
-                    white_space="pre-wrap",
-                    word_break="break-word",
-                    font_family="monospace"
-                ),
-                width="100%",
-                max_width="100%",
-                overflow_x="auto"
-            ),
-            spacing="2",
-            align_items="start",
-            width="100%"
-        ),
-        padding="12px",
-        border_radius="6px",
-        background_color="#fff7ed",
-        border="1px solid #fdba74",
-        width="100%",
-        max_width="100%"
+    raw_content = block.get("content", "")
+    content = rx.text(
+        raw_content if isinstance(raw_content, str) else str(raw_content),
+        size="2",
+        white_space="pre-wrap",
+        word_break="break-word",
+        font_family="monospace"
+    )
+    return styled_content_block(
+        badge_text="File History Snapshot",
+        badge_color="orange",
+        content=content,
+        background_color=COLORS['file_history_bg'],
+        border_color=COLORS['file_history_border']
     )
 
 
 def render_unknown_block(block: Dict) -> rx.Component:
     """Render an unknown content block type with generic styling"""
     block_type = block.get("type", "unknown")
-    content = block.get("content", "")
+    raw_content = block.get("content", "")
 
     # Convert content to string if it's not already
-    if not isinstance(content, str):
-        content = str(content)
+    if not isinstance(raw_content, str):
+        raw_content = str(raw_content)
 
-    return rx.box(
-        rx.vstack(
-            rx.hstack(
-                rx.badge(f"Unknown Type: {block_type}", color_scheme="gray", size="1"),
-            ),
-            rx.box(
-                rx.text(
-                    content,
-                    size="2",
-                    white_space="pre-wrap",
-                    word_break="break-word",
-                ),
-                width="100%",
-                max_width="100%",
-                overflow_x="auto"
-            ),
-            spacing="2",
-            align_items="start",
-            width="100%"
-        ),
-        padding="12px",
-        border_radius="6px",
-        background_color="#f9fafb",
-        border="1px solid #d1d5db",
-        width="100%",
-        max_width="100%"
+    content = rx.text(
+        raw_content,
+        size="2",
+        white_space="pre-wrap",
+        word_break="break-word"
+    )
+
+    return styled_content_block(
+        badge_text=f"Unknown Type: {block_type}",
+        badge_color="gray",
+        content=content,
+        background_color=COLORS['unknown_bg'],
+        border_color=COLORS['unknown_border']
     )
 
 
@@ -689,8 +598,8 @@ def session_detail() -> rx.Component:
                     ),
                     padding="12px",
                     border_radius="6px",
-                    background_color="#eff6ff",
-                    border="1px solid #bfdbfe",
+                    background_color=COLORS['session_summary_bg'],
+                    border=f"1px solid {COLORS['session_summary_border']}",
                     width="100%",
                     margin_top="10px",
                     margin_bottom="10px"
@@ -753,8 +662,8 @@ def session_detail() -> rx.Component:
                         width="100%",
                         background_color=rx.cond(
                             msg.type == "user",
-                            "#fef08a",  # Brighter yellow for user messages
-                            "white"     # Default white for other messages
+                            COLORS['user_message_bg'],
+                            "white"  # Default white for other messages
                         )
                     )
                 ),
@@ -780,6 +689,37 @@ def session_detail() -> rx.Component:
             justify_content="center",
             height="400px"
         )
+    )
+
+
+def range_filter_input(label: str, min_filter_name: str, max_filter_name: str) -> rx.Component:
+    """Create a range filter input with min/max fields
+
+    Args:
+        label: Display label for the filter (e.g., "Msgs", "In", "Out")
+        min_filter_name: State attribute name for minimum value (e.g., "min_messages")
+        max_filter_name: State attribute name for maximum value (e.g., "max_messages")
+    """
+    return rx.hstack(
+        rx.text(label, weight="bold", size="2", min_width="50px"),
+        rx.input(
+            placeholder="Min",
+            type="number",
+            value=getattr(State, min_filter_name),
+            on_change=lambda v: State.set_numeric_filter(min_filter_name, v),
+            width="60px"
+        ),
+        rx.text("to", size="1"),
+        rx.input(
+            placeholder="Max",
+            type="number",
+            value=getattr(State, max_filter_name),
+            on_change=lambda v: State.set_numeric_filter(max_filter_name, v),
+            width="60px"
+        ),
+        spacing="2",
+        align_items="center",
+        width="100%"
     )
 
 
@@ -818,71 +758,11 @@ def left_sidebar() -> rx.Component:
                 State.filters_expanded,
                 rx.vstack(
                     # Message Count filter
-                    rx.hstack(
-                        rx.text("Msgs", weight="bold", size="2", min_width="50px"),
-                        rx.input(
-                            placeholder="Min",
-                            type="number",
-                            value=State.min_messages,
-                            on_change=State.set_min_messages,
-                            width="60px"
-                        ),
-                        rx.text("to", size="1"),
-                        rx.input(
-                            placeholder="Max",
-                            type="number",
-                            value=State.max_messages,
-                            on_change=State.set_max_messages,
-                            width="60px"
-                        ),
-                        spacing="2",
-                        align_items="center",
-                        width="100%"
-                    ),
+                    range_filter_input("Msgs", "min_messages", "max_messages"),
                     # Input Tokens filter
-                    rx.hstack(
-                        rx.text("In", weight="bold", size="2", min_width="50px"),
-                        rx.input(
-                            placeholder="Min",
-                            type="number",
-                            value=State.min_input_tokens,
-                            on_change=State.set_min_input_tokens,
-                            width="60px"
-                        ),
-                        rx.text("to", size="1"),
-                        rx.input(
-                            placeholder="Max",
-                            type="number",
-                            value=State.max_input_tokens,
-                            on_change=State.set_max_input_tokens,
-                            width="60px"
-                        ),
-                        spacing="2",
-                        align_items="center",
-                        width="100%"
-                    ),
+                    range_filter_input("In", "min_input_tokens", "max_input_tokens"),
                     # Output Tokens filter
-                    rx.hstack(
-                        rx.text("Out", weight="bold", size="2", min_width="50px"),
-                        rx.input(
-                            placeholder="Min",
-                            type="number",
-                            value=State.min_output_tokens,
-                            on_change=State.set_min_output_tokens,
-                            width="60px"
-                        ),
-                        rx.text("to", size="1"),
-                        rx.input(
-                            placeholder="Max",
-                            type="number",
-                            value=State.max_output_tokens,
-                            on_change=State.set_max_output_tokens,
-                            width="60px"
-                        ),
-                        spacing="2",
-                        align_items="center",
-                        width="100%"
-                    ),
+                    range_filter_input("Out", "min_output_tokens", "max_output_tokens"),
                     # Git Branch filter
                     rx.hstack(
                         rx.text("Branch", weight="bold", size="2", min_width="50px"),
