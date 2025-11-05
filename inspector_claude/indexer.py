@@ -18,17 +18,37 @@ def normalize_content_block(block: Dict[str, Any]) -> Dict[str, Any]:
     normalized = block.copy()
     block_type = block.get('type')
 
+    # Ensure text blocks have 'text' key
+    if block_type == 'text':
+        if 'text' not in normalized or normalized['text'] is None:
+            normalized['text'] = '(no text content)'
+
+    # Ensure thinking blocks have 'thinking' key
+    if block_type == 'thinking':
+        if 'thinking' not in normalized or normalized['thinking'] is None:
+            normalized['thinking'] = '(no thinking content)'
+
     # Convert tool_use input to JSON string for display and truncate ID
     if block_type == 'tool_use':
-        if 'input' in normalized and isinstance(normalized['input'], dict):
+        # Ensure required keys exist
+        if 'name' not in normalized:
+            normalized['name'] = 'unknown'
+        if 'input' not in normalized:
+            normalized['input'] = '{}'
+        elif isinstance(normalized['input'], dict):
             normalized['input'] = json.dumps(normalized['input'], indent=2)
         # Truncate ID for display
         if 'id' in normalized:
             normalized['id_short'] = str(normalized['id'])[:8]
+        else:
+            normalized['id_short'] = 'unknown'
 
     # Convert tool_result content to string if it's a list and truncate tool_use_id
     if block_type == 'tool_result':
-        if 'content' in normalized:
+        # Ensure content exists
+        if 'content' not in normalized:
+            normalized['content'] = '(no content)'
+        else:
             content = normalized['content']
             if isinstance(content, list):
                 # Tool result content can be a list of text blocks
@@ -43,18 +63,19 @@ def normalize_content_block(block: Dict[str, Any]) -> Dict[str, Any]:
                 normalized['content'] = json.dumps(content, indent=2)
 
         # Create a preview version for UI display
-        if 'content' in normalized:
-            content_str = str(normalized['content'])
-            if len(content_str) > CONTENT_PREVIEW_LENGTH:
-                normalized['content_preview'] = content_str[:CONTENT_PREVIEW_LENGTH] + TRUNCATION_SUFFIX
-                normalized['is_long'] = True
-            else:
-                normalized['content_preview'] = content_str
-                normalized['is_long'] = False
+        content_str = str(normalized['content'])
+        if len(content_str) > CONTENT_PREVIEW_LENGTH:
+            normalized['content_preview'] = content_str[:CONTENT_PREVIEW_LENGTH] + TRUNCATION_SUFFIX
+            normalized['is_long'] = True
+        else:
+            normalized['content_preview'] = content_str
+            normalized['is_long'] = False
 
         # Truncate tool_use_id for display
         if 'tool_use_id' in normalized:
             normalized['tool_use_id_short'] = str(normalized['tool_use_id'])[:8]
+        else:
+            normalized['tool_use_id_short'] = 'unknown'
 
     # Flatten image source structure for easier UI rendering
     if block_type == 'image':
@@ -64,6 +85,12 @@ def normalize_content_block(block: Dict[str, Any]) -> Dict[str, Any]:
             normalized['source_media_type'] = source.get('media_type', 'image/png')
             normalized['source_data'] = source.get('data', '')
             normalized['source_url'] = source.get('url', '')
+        else:
+            # Provide defaults if source is missing
+            normalized['source_type'] = 'unknown'
+            normalized['source_media_type'] = 'image/png'
+            normalized['source_data'] = ''
+            normalized['source_url'] = ''
 
     return normalized
 

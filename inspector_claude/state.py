@@ -123,6 +123,29 @@ class State(rx.State):
         print(f"Loaded {len(sessions)} sessions (metadata only)")
         self.apply_filters()
 
+    def refresh_session_list(self):
+        """Refresh the session list by re-scanning the projects directory for new sessions"""
+        print(f"Auto-refreshing session list from {rxconfig.claude_dir}...")
+        sessions = load_sessions(claude_dir=rxconfig.claude_dir, load_messages=False)
+
+        # Check if we found any new sessions
+        new_session_count = len(sessions) - len(self.all_sessions)
+
+        # Update State with new sessions
+        self.all_sessions = sessions
+
+        # Update cache with new session metadata
+        for session_id, session in sessions.items():
+            cache.store_session_metadata(session_id, session)
+
+        # Re-apply filters to include new sessions
+        self.apply_filters()
+
+        if new_session_count > 0:
+            print(f"Found {new_session_count} new session(s)")
+        else:
+            print(f"No new sessions found (total: {len(sessions)})")
+
     def apply_filters(self):
         """Apply current filters to sessions"""
         filtered = []

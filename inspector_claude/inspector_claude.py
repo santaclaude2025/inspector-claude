@@ -7,23 +7,34 @@ from inspector_claude.components import left_sidebar, session_detail
 
 def index() -> rx.Component:
     """Main page"""
-    return rx.hstack(
-        # Left sidebar
-        left_sidebar(),
-
-        # Right detail panel
+    return rx.fragment(
+        # Hidden auto-refresh timer (30 seconds)
         rx.box(
-            session_detail(),
-            flex="1",
-            padding="20px 20px 5px 20px",
-            overflow_y="auto",
-            height="100vh"
+            rx.moment(
+                interval=30000,  # 30 seconds in milliseconds
+                on_change=State.refresh_session_list
+            ),
+            display="none"
         ),
 
-        spacing="0",
-        width="100%",
-        height="100vh",
-        align_items="stretch"
+        rx.hstack(
+            # Left sidebar
+            left_sidebar(),
+
+            # Right detail panel
+            rx.box(
+                session_detail(),
+                flex="1",
+                padding="20px 20px 5px 20px",
+                overflow_y="auto",
+                height="100vh"
+            ),
+
+            spacing="0",
+            width="100%",
+            height="100vh",
+            align_items="stretch"
+        )
     )
 
 
