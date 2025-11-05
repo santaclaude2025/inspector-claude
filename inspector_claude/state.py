@@ -6,6 +6,7 @@ from datetime import datetime
 from pathlib import Path
 from inspector_claude.indexer import load_sessions, load_session_messages, Session, SessionMessage
 from inspector_claude.config import FILTER_DEFAULTS
+import inspector_claude.cache as cache
 import rxconfig
 
 
@@ -25,14 +26,8 @@ class SessionSummary(rx.Base):
 class State(rx.State):
     """Application state"""
 
-    # All sessions loaded at startup
+    # All sessions loaded at startup (metadata only - messages stored in cache)
     all_sessions: Dict[str, Session] = {}
-
-    # Track which sessions have had messages loaded
-    loaded_message_sessions: Set[str] = set()
-
-    # Track when each session's messages were loaded
-    session_load_times: Dict[str, datetime] = {}
 
     # Filtered sessions for display
     filtered_sessions: List[SessionSummary] = []
@@ -116,8 +111,16 @@ class State(rx.State):
     def load_data(self):
         """Load all sessions from configured claude_dir (metadata only, not messages)"""
         print(f"Loading session metadata from {rxconfig.claude_dir}...")
-        self.all_sessions = load_sessions(claude_dir=rxconfig.claude_dir, load_messages=False)
-        print(f"Loaded {len(self.all_sessions)} sessions")
+        sessions = load_sessions(claude_dir=rxconfig.claude_dir, load_messages=False)
+
+        # Store in State for metadata (no messages loaded yet)
+        self.all_sessions = sessions
+
+        # Also store in cache for later message loading (metadata only, NOT marked as loaded)
+        for session_id, session in sessions.items():
+            cache.store_session_metadata(session_id, session)
+
+        print(f"Loaded {len(sessions)} sessions (metadata only)")
         self.apply_filters()
 
     def apply_filters(self):
@@ -213,16 +216,20 @@ class State(rx.State):
         self.current_page = 1  # Reset to first page when selecting a new session
         self.expanded_tool_results = set()  # Clear expanded tool results
 
-        # Load messages for this session if not already loaded
-        if session_id not in self.loaded_message_sessions:
-            session = self.all_sessions.get(session_id)
+        # Load messages into cache if not already loaded
+        if not cache.is_session_loaded(session_id):
+            session = cache.get_session(session_id)
             if session:
                 print(f"Loading messages for session {session_id}...")
                 messages = load_session_messages(session_id, session.project_dir, claude_dir=rxconfig.claude_dir)
+
+                # Update the cached session with messages (NOT the State's session)
                 session.messages = messages
-                self.loaded_message_sessions.add(session_id)
-                self.session_load_times[session_id] = datetime.now()
+                cache.cache_session(session_id, session, datetime.now())
+
                 print(f"Loaded {len(messages)} messages")
+        else:
+            print(f"Session {session_id} messages already cached")
 
     def next_page(self):
         """Go to next page of messages"""
@@ -249,26 +256,37 @@ class State(rx.State):
     def refresh_session(self):
         """Refresh the current session by re-reading messages from disk"""
         if self.selected_session_id:
-            session = self.all_sessions.get(self.selected_session_id)
+            session = cache.get_session(self.selected_session_id)
             if session:
                 print(f"Refreshing messages for session {self.selected_session_id}...")
                 messages = load_session_messages(self.selected_session_id, session.project_dir, claude_dir=rxconfig.claude_dir)
+
+                # Update the cached session with fresh messages
                 session.messages = messages
-                # Ensure session is marked as loaded
-                self.loaded_message_sessions.add(self.selected_session_id)
-                self.session_load_times[self.selected_session_id] = datetime.now()
+                cache.cache_session(self.selected_session_id, session, datetime.now())
+
+                # Clear cached file mtime so it gets re-checked
+                cache.cache_file_mtime(self.selected_session_id, 0)
+
                 print(f"Refreshed {len(messages)} messages")
                 # Reset to first page
                 self.current_page = 1
                 # Clear expanded tool results
                 self.expanded_tool_results = set()
 
-    @rx.var
-    def selected_session(self) -> Optional[Session]:
-        """Get the currently selected session"""
+    def _get_selected_session(self) -> Optional[Session]:
+        """Get the currently selected session from cache (private, not serialized)"""
         if self.selected_session_id:
-            return self.all_sessions.get(self.selected_session_id)
+            return cache.get_session(self.selected_session_id)
         return None
+
+    @rx.var
+    def selected_session_summary(self) -> str:
+        """Get the summary/description of the currently selected session"""
+        session = self._get_selected_session()
+        if not session:
+            return ""  # No session selected - UI will hide the section
+        return session.description  # Returns summary, or falls back to first message
 
     @rx.var
     def session_file_updated(self) -> bool:
@@ -277,11 +295,16 @@ class State(rx.State):
             return False
 
         # Check if we have a load time for this session
-        load_time = self.session_load_times.get(self.selected_session_id)
+        load_time = cache.get_load_time(self.selected_session_id)
         if not load_time:
             return False
 
-        # Get the session file path
+        # Try to get cached mtime first to avoid file I/O
+        cached_mtime = cache.get_cached_mtime(self.selected_session_id)
+        if cached_mtime and cached_mtime > 0:
+            return cached_mtime > load_time.timestamp()
+
+        # Only do file I/O if not cached
         session = self.all_sessions.get(self.selected_session_id)
         if not session:
             return False
@@ -290,15 +313,17 @@ class State(rx.State):
 
         # Check if file exists and get its modification time
         if session_file.exists():
-            file_mtime = datetime.fromtimestamp(session_file.stat().st_mtime)
-            return file_mtime > load_time
+            mtime = session_file.stat().st_mtime
+            # Cache it for next time
+            cache.cache_file_mtime(self.selected_session_id, mtime)
+            return mtime > load_time.timestamp()
 
         return False
 
     @rx.var
     def total_pages(self) -> int:
         """Get total number of pages for current session"""
-        session = self.selected_session
+        session = self._get_selected_session()
         if session and session.messages:
             return (len(session.messages) + self.page_size - 1) // self.page_size
         return 1
@@ -306,7 +331,7 @@ class State(rx.State):
     @rx.var
     def paginated_messages(self) -> List[SessionMessage]:
         """Get messages for the current page"""
-        session = self.selected_session
+        session = self._get_selected_session()
         if session and session.messages:
             start_idx = (self.current_page - 1) * self.page_size
             end_idx = start_idx + self.page_size

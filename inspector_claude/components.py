@@ -348,11 +348,11 @@ def session_detail() -> rx.Component:
         rx.vstack(
             # Show summary if available
             rx.cond(
-                State.selected_session.summary,
+                State.selected_session_summary,
                 rx.box(
                     rx.vstack(
                         rx.badge("Session Summary", color_scheme="blue", size="2"),
-                        rx.text(State.selected_session.summary, size="2", color="#555"),
+                        rx.text(State.selected_session_summary, size="2", color="#555"),
                         spacing="2",
                         align_items="start"
                     ),
