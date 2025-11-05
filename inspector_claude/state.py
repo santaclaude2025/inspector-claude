@@ -117,8 +117,10 @@ class State(rx.State):
         self.all_sessions = sessions
 
         # Also store in cache for later message loading (metadata only, NOT marked as loaded)
+        # IMPORTANT: Don't overwrite sessions that already have messages loaded (e.g., after browser refresh)
         for session_id, session in sessions.items():
-            cache.store_session_metadata(session_id, session)
+            if not cache.is_session_loaded(session_id):
+                cache.store_session_metadata(session_id, session)
 
         print(f"Loaded {len(sessions)} sessions (metadata only)")
         self.apply_filters()
