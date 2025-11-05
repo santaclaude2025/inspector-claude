@@ -2,7 +2,10 @@
 
 import reflex as rx
 from typing import List, Dict, Optional, Set
+from datetime import datetime
+from pathlib import Path
 from inspector_claude.indexer import load_sessions, get_session_summary, Session, load_session_messages, SessionMessage
+import rxconfig
 
 
 # Filter default values - single source of truth
@@ -70,6 +73,9 @@ class State(rx.State):
 
     # Track which sessions have had messages loaded
     loaded_message_sessions: Set[str] = set()
+
+    # Track when each session's messages were loaded
+    session_load_times: Dict[str, datetime] = {}
 
     # Filtered sessions for display
     filtered_sessions: List[SessionSummary] = []
@@ -151,9 +157,9 @@ class State(rx.State):
         return count
 
     def load_data(self):
-        """Load all sessions from ~/.claude (metadata only, not messages)"""
-        print("Loading session metadata from ~/.claude...")
-        self.all_sessions = load_sessions(load_messages=False)
+        """Load all sessions from configured claude_dir (metadata only, not messages)"""
+        print(f"Loading session metadata from {rxconfig.claude_dir}...")
+        self.all_sessions = load_sessions(claude_dir=rxconfig.claude_dir, load_messages=False)
         print(f"Loaded {len(self.all_sessions)} sessions")
         self.apply_filters()
 
@@ -255,9 +261,10 @@ class State(rx.State):
             session = self.all_sessions.get(session_id)
             if session:
                 print(f"Loading messages for session {session_id}...")
-                messages = load_session_messages(session_id, session.project_dir)
+                messages = load_session_messages(session_id, session.project_dir, claude_dir=rxconfig.claude_dir)
                 session.messages = messages
                 self.loaded_message_sessions.add(session_id)
+                self.session_load_times[session_id] = datetime.now()
                 print(f"Loaded {len(messages)} messages")
 
     def next_page(self):
@@ -282,12 +289,54 @@ class State(rx.State):
         """Clear selected session"""
         self.selected_session_id = None
 
+    def refresh_session(self):
+        """Refresh the current session by re-reading messages from disk"""
+        if self.selected_session_id:
+            session = self.all_sessions.get(self.selected_session_id)
+            if session:
+                print(f"Refreshing messages for session {self.selected_session_id}...")
+                messages = load_session_messages(self.selected_session_id, session.project_dir, claude_dir=rxconfig.claude_dir)
+                session.messages = messages
+                # Ensure session is marked as loaded
+                self.loaded_message_sessions.add(self.selected_session_id)
+                self.session_load_times[self.selected_session_id] = datetime.now()
+                print(f"Refreshed {len(messages)} messages")
+                # Reset to first page
+                self.current_page = 1
+                # Clear expanded tool results
+                self.expanded_tool_results = set()
+
     @rx.var
     def selected_session(self) -> Optional[Session]:
         """Get the currently selected session"""
         if self.selected_session_id:
             return self.all_sessions.get(self.selected_session_id)
         return None
+
+    @rx.var
+    def session_file_updated(self) -> bool:
+        """Check if the current session file has been modified since last load"""
+        if not self.selected_session_id:
+            return False
+
+        # Check if we have a load time for this session
+        load_time = self.session_load_times.get(self.selected_session_id)
+        if not load_time:
+            return False
+
+        # Get the session file path
+        session = self.all_sessions.get(self.selected_session_id)
+        if not session:
+            return False
+
+        session_file = rxconfig.claude_dir / "projects" / session.project_dir / f"{self.selected_session_id}.jsonl"
+
+        # Check if file exists and get its modification time
+        if session_file.exists():
+            file_mtime = datetime.fromtimestamp(session_file.stat().st_mtime)
+            return file_mtime > load_time
+
+        return False
 
     @rx.var
     def total_pages(self) -> int:
@@ -672,6 +721,14 @@ def session_detail() -> rx.Component:
             rx.hstack(
                 rx.heading("Messages", size="4"),
                 rx.spacer(),
+                rx.button(
+                    "Refresh",
+                    on_click=State.refresh_session,
+                    size="2",
+                    variant="soft",
+                    color_scheme="green",
+                    disabled=~State.session_file_updated
+                ),
                 rx.button(
                     "First",
                     on_click=State.first_page,

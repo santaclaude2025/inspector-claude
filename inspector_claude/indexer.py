@@ -1,10 +1,11 @@
-"""Index and load Claude Code session data from ~/.claude"""
+"""Index and load Claude Code session data from configured claude_dir"""
 
 import json
 from pathlib import Path
 from typing import Dict, List, Optional, Any
 from dataclasses import dataclass, field
 from datetime import datetime
+import rxconfig
 
 # Constants for session description
 MAX_DESCRIPTION_LENGTH = 100
@@ -145,13 +146,15 @@ class Session:
         return "Untitled Session"
 
 
-def load_sessions(claude_dir: Path = Path.home() / ".claude", load_messages: bool = False) -> Dict[str, Session]:
-    """Load all sessions from ~/.claude directory
+def load_sessions(claude_dir: Path = None, load_messages: bool = False) -> Dict[str, Session]:
+    """Load all sessions from configured claude_dir
 
     Args:
-        claude_dir: Path to .claude directory
+        claude_dir: Path to .claude directory (defaults to rxconfig.claude_dir)
         load_messages: If True, load full message content. If False, only load metadata.
     """
+    if claude_dir is None:
+        claude_dir = rxconfig.claude_dir
     sessions = {}
 
     projects_dir = claude_dir / "projects"
@@ -281,17 +284,19 @@ def load_sessions(claude_dir: Path = Path.home() / ".claude", load_messages: boo
     return sessions
 
 
-def load_session_messages(session_id: str, project_dir: str, claude_dir: Path = Path.home() / ".claude") -> List[SessionMessage]:
+def load_session_messages(session_id: str, project_dir: str, claude_dir: Path = None) -> List[SessionMessage]:
     """Load messages for a specific session on demand
 
     Args:
         session_id: The session ID
         project_dir: The encoded project directory name (e.g., "-Users-santaclaude-dev")
-        claude_dir: Path to .claude directory
+        claude_dir: Path to .claude directory (defaults to rxconfig.claude_dir)
 
     Returns:
         List of SessionMessage objects with full content
     """
+    if claude_dir is None:
+        claude_dir = rxconfig.claude_dir
     messages = []
 
     # Use the encoded project directory name directly

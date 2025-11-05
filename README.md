@@ -71,9 +71,3 @@ Key components:
 
 Session data is indexed in memory at startup for simplicity.
 
-## 🚧 Future Enhancements
-
-See [TODO.md](TODO.md) for planned features including:
-- Image content support
-- Message sender type filters
-- Session compaction handling
