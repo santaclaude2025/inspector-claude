@@ -134,9 +134,12 @@ class State(rx.State):
         # Update State with new sessions
         self.all_sessions = sessions
 
-        # Update cache with new session metadata
+        # Update cache with new session metadata, but ONLY for sessions that don't have messages loaded
+        # to avoid overwriting sessions that have already been loaded with full message content
         for session_id, session in sessions.items():
-            cache.store_session_metadata(session_id, session)
+            if not cache.is_session_loaded(session_id):
+                # Only update metadata for sessions that haven't been loaded yet
+                cache.store_session_metadata(session_id, session)
 
         # Re-apply filters to include new sessions
         self.apply_filters()
