@@ -285,6 +285,142 @@ def render_unknown_block(block: Dict) -> rx.Component:
     )
 
 
+def render_agent_invocation_block(block: Dict, agent_metadata) -> rx.Component:
+    """Render a Task tool_use block with agent information
+
+    Shows agent ID, status, summary, and button to open agent history
+    """
+    from inspector_claude.state import State
+
+    # Format duration in seconds (using rx.cond instead of if)
+    duration_sec = rx.cond(
+        agent_metadata.total_duration_ms,
+        agent_metadata.total_duration_ms / 1000,
+        0
+    )
+
+    # Build status indicator (using rx.cond)
+    status_icon = rx.cond(agent_metadata.status == "completed", "✓", "✗")
+    status_color = rx.cond(agent_metadata.status == "completed", "green", "red")
+
+    header_extras = rx.hstack(
+        rx.text(
+            "Agent: " + agent_metadata.agent_id,
+            size="1",
+            color="gray"
+        ),
+        rx.badge(
+            status_icon + " " + agent_metadata.status,
+            color_scheme=status_color,
+            size="1"
+        ),
+        spacing="2"
+    )
+
+    content = rx.vstack(
+        # Task prompt
+        rx.vstack(
+            rx.text("Task:", size="1", weight="bold", color="#555"),
+            rx.text(
+                agent_metadata.prompt,
+                size="2",
+                white_space="pre-wrap",
+                color="#333"
+            ),
+            spacing="1",
+            align_items="start",
+            width="100%"
+        ),
+
+        # Summary
+        rx.cond(
+            agent_metadata.summary != "",
+            rx.vstack(
+                rx.text("Summary:", size="1", weight="bold", color="#555"),
+                rx.text(
+                    agent_metadata.summary,
+                    size="2",
+                    white_space="pre-wrap",
+                    color="#333"
+                ),
+                spacing="1",
+                align_items="start",
+                width="100%"
+            ),
+            rx.box()
+        ),
+
+        # Stats and button
+        rx.hstack(
+            rx.badge(
+                "📊 " + agent_metadata.total_tokens.to(str) + " tokens",
+                color_scheme="cyan",
+                size="1"
+            ),
+            rx.badge(
+                "⏱️ " + duration_sec.to(str) + "s",
+                color_scheme="orange",
+                size="1"
+            ),
+            rx.spacer(),
+            rx.button(
+                "Open Agent History ➜",
+                on_click=lambda: State.open_agent_session(agent_metadata.agent_id),
+                size="2",
+                variant="solid",
+                color_scheme="blue"
+            ),
+            spacing="2",
+            align_items="center",
+            width="100%"
+        ),
+
+        spacing="3",
+        align_items="start",
+        width="100%"
+    )
+
+    return styled_content_block(
+        badge_text="🤖 Tool: Task",
+        badge_color="blue",
+        content=content,
+        background_color="#eff6ff",
+        border_color="#93c5fd",
+        header_extras=header_extras
+    )
+
+
+def agent_view_header() -> rx.Component:
+    """Header shown when viewing an agent side-chain"""
+    from inspector_claude.state import State
+
+    return rx.box(
+        rx.hstack(
+            rx.button(
+                "🔙 Back to Parent",
+                on_click=State.close_agent_session,
+                size="2",
+                variant="soft",
+                color_scheme="gray"
+            ),
+            rx.badge(
+                f"🤖 Agent Side-Chain: {State.viewing_agent_id}",
+                color_scheme="blue",
+                size="2"
+            ),
+            spacing="3",
+            align_items="center",
+            width="100%"
+        ),
+        padding="12px",
+        border_radius="6px",
+        background_color="#eff6ff",
+        border="2px solid #93c5fd",
+        width="100%",
+        margin_bottom="10px"
+    )
+
+
 def render_content_block(block: Dict) -> rx.Component:
     """Render a single content block based on its type"""
     # Check each type and render accordingly
@@ -316,17 +452,39 @@ def render_content_block(block: Dict) -> rx.Component:
     )
 
 
+def render_agent_card_if_present(msg) -> rx.Component:
+    """Render agent invocation card if message has agent metadata"""
+    return rx.cond(
+        msg.agent_metadata,
+        # Render agent card with a placeholder block (agent metadata has all info we need)
+        render_agent_invocation_block({}, msg.agent_metadata),
+        rx.box()  # No agent metadata, render nothing
+    )
+
+
+def render_message_content_blocks(msg) -> rx.Component:
+    """Render content blocks for a message"""
+    # Simply render all content blocks normally
+    return rx.vstack(
+        rx.foreach(
+            msg.content_blocks,
+            render_content_block
+        ),
+        spacing="3",
+        width="100%",
+        align_items="start"
+    )
+
+
 def render_message_content(msg) -> rx.Component:
     """Render message content - either structured blocks or legacy text"""
     # Use rx.cond to handle conditional rendering (Reflex doesn't allow if statements on Vars)
     return rx.cond(
         msg.content_blocks.length() > 0,
-        # If we have content_blocks, render them
+        # If we have content_blocks, render agent card first (if present) then blocks
         rx.vstack(
-            rx.foreach(
-                msg.content_blocks,
-                render_content_block
-            ),
+            render_agent_card_if_present(msg),
+            render_message_content_blocks(msg),
             spacing="3",
             width="100%",
             align_items="start"
@@ -346,25 +504,31 @@ def session_detail() -> rx.Component:
         State.selected_session_id,
         # Show session details when selected
         rx.vstack(
-            # Show summary if available
+            # Show agent header if viewing agent, otherwise show session summary
             rx.cond(
-                State.selected_session_summary,
-                rx.box(
-                    rx.vstack(
-                        rx.badge("Session Summary", color_scheme="blue", size="2"),
-                        rx.text(State.selected_session_summary, size="2", color="#555"),
-                        spacing="2",
-                        align_items="start"
+                State.is_viewing_agent,
+                # Agent header
+                agent_view_header(),
+                # Session summary (normal mode)
+                rx.cond(
+                    State.selected_session_summary,
+                    rx.box(
+                        rx.vstack(
+                            rx.badge("Session Summary", color_scheme="blue", size="2"),
+                            rx.text(State.selected_session_summary, size="2", color="#555"),
+                            spacing="2",
+                            align_items="start"
+                        ),
+                        padding="12px",
+                        border_radius="6px",
+                        background_color=COLORS['session_summary_bg'],
+                        border=f"1px solid {COLORS['session_summary_border']}",
+                        width="100%",
+                        margin_top="10px",
+                        margin_bottom="10px"
                     ),
-                    padding="12px",
-                    border_radius="6px",
-                    background_color=COLORS['session_summary_bg'],
-                    border=f"1px solid {COLORS['session_summary_border']}",
-                    width="100%",
-                    margin_top="10px",
-                    margin_bottom="10px"
-                ),
-                rx.box()
+                    rx.box()
+                )
             ),
             rx.divider(),
             rx.hstack(

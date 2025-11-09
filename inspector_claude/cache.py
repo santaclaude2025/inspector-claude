@@ -58,6 +58,49 @@ def clear_cache() -> None:
     _file_mtimes.clear()
 
 
+def store_agent_session(agent_id: str, parent_session_id: str, session: Session) -> None:
+    """Store an agent session in cache
+
+    Args:
+        agent_id: The agent ID
+        parent_session_id: The parent session ID
+        session: The agent Session object
+    """
+    # Use composite key for agents
+    cache_key = f"{parent_session_id}:agent:{agent_id}"
+    _session_cache[cache_key] = session
+    _loaded_sessions.add(cache_key)
+    _session_load_times[cache_key] = datetime.now()
+
+
+def get_agent_session(agent_id: str, parent_session_id: str) -> Optional[Session]:
+    """Get an agent session from cache
+
+    Args:
+        agent_id: The agent ID
+        parent_session_id: The parent session ID
+
+    Returns:
+        Session object if cached, else None
+    """
+    cache_key = f"{parent_session_id}:agent:{agent_id}"
+    return _session_cache.get(cache_key)
+
+
+def is_agent_loaded(agent_id: str, parent_session_id: str) -> bool:
+    """Check if agent messages are loaded in cache
+
+    Args:
+        agent_id: The agent ID
+        parent_session_id: The parent session ID
+
+    Returns:
+        True if agent is loaded, False otherwise
+    """
+    cache_key = f"{parent_session_id}:agent:{agent_id}"
+    return cache_key in _loaded_sessions
+
+
 def get_cache_stats() -> dict:
     """Get cache statistics for debugging"""
     total_messages = sum(

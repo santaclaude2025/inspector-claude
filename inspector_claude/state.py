@@ -4,7 +4,7 @@ import reflex as rx
 from typing import List, Dict, Optional, Set
 from datetime import datetime
 from pathlib import Path
-from inspector_claude.indexer import load_sessions, load_session_messages, Session, SessionMessage
+from inspector_claude.indexer import load_sessions, load_session_messages, load_agent_session, Session, SessionMessage
 from inspector_claude.config import FILTER_DEFAULTS
 import inspector_claude.cache as cache
 import rxconfig
@@ -57,6 +57,10 @@ class State(rx.State):
 
     # Tool result expansion state (tracks which tool results are expanded by tool_use_id)
     expanded_tool_results: Set[str] = set()
+
+    # Agent navigation state
+    viewing_agent_id: Optional[str] = None  # None = main session, else agent ID
+    parent_page_number: int = 1  # Save parent's page number when viewing agent
 
     def toggle_tool_result_expansion(self, tool_use_id: str):
         """Toggle expansion of a tool result"""
@@ -280,6 +284,48 @@ class State(rx.State):
     def clear_selection(self):
         """Clear selected session"""
         self.selected_session_id = None
+        self.viewing_agent_id = None
+
+    def open_agent_session(self, agent_id: str):
+        """Open an agent side-chain for viewing
+
+        Args:
+            agent_id: The agent ID to open
+        """
+        if not self.selected_session_id:
+            return
+
+        # Save current page number before switching to agent
+        self.parent_page_number = self.current_page
+
+        # Set viewing mode to agent
+        self.viewing_agent_id = agent_id
+
+        # Reset to page 1 for agent view and clear expansion state
+        self.current_page = 1
+        self.expanded_tool_results = set()
+
+        # Load agent messages if not already loaded
+        if not cache.is_agent_loaded(agent_id, self.selected_session_id):
+            parent_session = cache.get_session(self.selected_session_id)
+            if parent_session:
+                print(f"Loading agent session {agent_id}...")
+                agent_session = load_agent_session(agent_id, parent_session.project_dir, claude_dir=rxconfig.claude_dir)
+
+                if agent_session:
+                    cache.store_agent_session(agent_id, self.selected_session_id, agent_session)
+                    print(f"Loaded agent with {len(agent_session.messages)} messages")
+                else:
+                    print(f"Failed to load agent {agent_id}")
+        else:
+            print(f"Agent {agent_id} already cached")
+
+    def close_agent_session(self):
+        """Return to parent session view"""
+        self.viewing_agent_id = None
+        # Restore parent's page number
+        self.current_page = self.parent_page_number
+        self.expanded_tool_results = set()
 
     def refresh_session(self):
         """Refresh the current session by re-reading messages from disk"""
@@ -307,6 +353,23 @@ class State(rx.State):
         if self.selected_session_id:
             return cache.get_session(self.selected_session_id)
         return None
+
+    def _get_current_session(self) -> Optional[Session]:
+        """Get the currently displayed session (parent or agent) - private helper"""
+        if not self.selected_session_id:
+            return None
+
+        if self.viewing_agent_id:
+            # Return agent session if viewing one
+            return cache.get_agent_session(self.viewing_agent_id, self.selected_session_id)
+        else:
+            # Return parent session
+            return cache.get_session(self.selected_session_id)
+
+    @rx.var
+    def is_viewing_agent(self) -> bool:
+        """Check if currently viewing an agent side-chain"""
+        return self.viewing_agent_id is not None
 
     @rx.var
     def selected_session_summary(self) -> str:
@@ -350,16 +413,16 @@ class State(rx.State):
 
     @rx.var
     def total_pages(self) -> int:
-        """Get total number of pages for current session"""
-        session = self._get_selected_session()
+        """Get total number of pages for current session (parent or agent)"""
+        session = self._get_current_session()
         if session and session.messages:
             return (len(session.messages) + self.page_size - 1) // self.page_size
         return 1
 
     @rx.var
     def paginated_messages(self) -> List[SessionMessage]:
-        """Get messages for the current page"""
-        session = self._get_selected_session()
+        """Get messages for the current page (parent or agent)"""
+        session = self._get_current_session()
         if session and session.messages:
             start_idx = (self.current_page - 1) * self.page_size
             end_idx = start_idx + self.page_size

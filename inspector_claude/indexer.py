@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import Dict, List, Optional, Any
 from dataclasses import dataclass, field
 from datetime import datetime
+from pydantic import BaseModel
 import rxconfig
 
 # Constants for session description
@@ -95,6 +96,17 @@ def normalize_content_block(block: Dict[str, Any]) -> Dict[str, Any]:
     return normalized
 
 
+class AgentMetadata(BaseModel):
+    """Metadata about an agent invocation"""
+    agent_id: str
+    tool_use_id: str          # Links to the tool_use that created this agent
+    prompt: str               # Task given to agent
+    status: str               # "completed", "failed", etc.
+    total_tokens: int
+    total_duration_ms: int
+    summary: str              # Summary from agent's final response (truncated)
+
+
 @dataclass
 class SessionMessage:
     """Represents a single message in a conversation"""
@@ -107,6 +119,7 @@ class SessionMessage:
     model: Optional[str] = None
     tokens_input: int = 0
     tokens_output: int = 0
+    agent_metadata: Optional[AgentMetadata] = None  # For tool_result blocks that invoked agents
 
 
 @dataclass
@@ -120,6 +133,8 @@ class Session:
     messages: List[SessionMessage] = field(default_factory=list)
     start_time: Optional[datetime] = None
     end_time: Optional[datetime] = None
+    is_agent: bool = False  # True if this is an agent side-chain
+    parent_session_id: Optional[str] = None  # For agents, links to parent session ID
 
     @property
     def message_count(self) -> int:
@@ -173,6 +188,209 @@ class Session:
         return "Untitled Session"
 
 
+def extract_agent_metadata(message_data: dict) -> Optional[AgentMetadata]:
+    """Extract agent metadata from toolUseResult field
+
+    Args:
+        message_data: The top-level message dict from JSONL
+
+    Returns:
+        AgentMetadata if this message has a toolUseResult with agentId, else None
+    """
+    tool_use_result = message_data.get('toolUseResult')
+    if not tool_use_result or not isinstance(tool_use_result, dict):
+        return None
+
+    agent_id = tool_use_result.get('agentId')
+    if not agent_id:
+        return None
+
+    # Extract tool_use_id from the message content
+    tool_use_id = None
+    message = message_data.get('message', {})
+    content = message.get('content', [])
+    if isinstance(content, list):
+        for block in content:
+            if isinstance(block, dict) and block.get('type') == 'tool_result':
+                tool_use_id = block.get('tool_use_id', '')
+                break
+
+    # Extract summary from agent's final response (first text block, truncated)
+    summary = ""
+    result_content = tool_use_result.get('content', [])
+    if isinstance(result_content, list):
+        for item in result_content:
+            if isinstance(item, dict) and item.get('type') == 'text':
+                text = item.get('text', '')
+                # Truncate to 200 characters
+                summary = text[:200] + "..." if len(text) > 200 else text
+                break
+
+    return AgentMetadata(
+        agent_id=agent_id,
+        tool_use_id=tool_use_id or 'unknown',
+        prompt=tool_use_result.get('prompt', ''),
+        status=tool_use_result.get('status', 'unknown'),
+        total_tokens=tool_use_result.get('totalTokens', 0),
+        total_duration_ms=tool_use_result.get('totalDurationMs', 0),
+        summary=summary
+    )
+
+
+def parse_message_from_jsonl(data: dict, load_content: bool = True, load_blocks: bool = True) -> Optional[SessionMessage]:
+    """Parse a single JSONL line into a SessionMessage
+
+    Args:
+        data: Parsed JSON object from JSONL line
+        load_content: Whether to load full message content
+        load_blocks: Whether to populate content_blocks (only applies if load_content=True)
+
+    Returns:
+        SessionMessage or None if this is a non-message entry (e.g., summary)
+    """
+    msg_type = data.get('type', '')
+
+    # Skip summary entries
+    if msg_type == 'summary':
+        return None
+
+    msg = SessionMessage(
+        uuid=data.get('uuid', ''),
+        type=msg_type,
+        timestamp=data.get('timestamp', '')
+    )
+
+    # Extract agent metadata if present (only for user messages)
+    if msg_type == 'user':
+        agent_metadata = extract_agent_metadata(data)
+        if agent_metadata:
+            msg.agent_metadata = agent_metadata
+
+    # Extract content and usage from message
+    if 'message' in data:
+        message_data = data['message']
+        msg.role = message_data.get('role')
+
+        if load_content:
+            content = message_data.get('content')
+            if isinstance(content, str):
+                msg.content = content
+            elif isinstance(content, list):
+                text_parts = []
+                for block in content:
+                    if isinstance(block, dict):
+                        block_type = block.get('type')
+                        if block_type in ('text', 'thinking', 'tool_use', 'tool_result', 'file-history-snapshot', 'image'):
+                            if load_blocks:
+                                msg.content_blocks.append(normalize_content_block(block))
+                        if block_type == 'text':
+                            text_parts.append(block.get('text', ''))
+                msg.content = '\n'.join(text_parts) if text_parts else None
+
+        msg.model = message_data.get('model')
+
+        # Extract token usage
+        usage = message_data.get('usage', {})
+        msg.tokens_input = usage.get('input_tokens', 0)
+        msg.tokens_output = usage.get('output_tokens', 0)
+
+    return msg
+
+
+def parse_session_metadata_from_jsonl(data: dict, session: Session) -> None:
+    """Update session metadata from a JSONL line (in-place)
+
+    Args:
+        data: Parsed JSON object from JSONL line
+        session: Session object to update
+    """
+    msg_type = data.get('type', '')
+
+    # Extract summary
+    if msg_type == 'summary' and session.summary is None:
+        session.summary = data.get('summary', '')
+        return
+
+    # Parse timestamp and update session time range
+    timestamp_str = data.get('timestamp', '')
+    if timestamp_str:
+        try:
+            timestamp = datetime.fromisoformat(timestamp_str.replace('Z', '+00:00'))
+            if session.start_time is None or timestamp < session.start_time:
+                session.start_time = timestamp
+            if session.end_time is None or timestamp > session.end_time:
+                session.end_time = timestamp
+        except:
+            pass
+
+    # Extract git branch
+    if session.git_branch is None:
+        session.git_branch = data.get('gitBranch')
+
+    # Extract project path
+    if not session.project_path and 'cwd' in data:
+        session.project_path = data['cwd']
+
+
+def load_agent_session(agent_id: str, project_dir: str, claude_dir: Path = None) -> Optional[Session]:
+    """Load a specific agent session file
+
+    Args:
+        agent_id: The 8-char agent ID (e.g., "57a58820")
+        project_dir: Encoded project directory name
+        claude_dir: Path to .claude directory (defaults to rxconfig.claude_dir)
+
+    Returns:
+        Session object with agent messages, or None if not found
+    """
+    if claude_dir is None:
+        claude_dir = rxconfig.claude_dir
+
+    agent_file = claude_dir / "projects" / project_dir / f"agent-{agent_id}.jsonl"
+
+    if not agent_file.exists():
+        print(f"Agent file not found: {agent_file}")
+        return None
+
+    # Create agent session object
+    session = Session(
+        session_id=f"agent-{agent_id}",
+        project_path="",
+        project_dir=project_dir,
+        is_agent=True
+    )
+
+    try:
+        with open(agent_file, 'r') as f:
+            for line in f:
+                if not line.strip():
+                    continue
+
+                try:
+                    data = json.loads(line)
+
+                    # Extract parent session ID from first message
+                    if session.parent_session_id is None:
+                        session.parent_session_id = data.get('sessionId')
+
+                    # Update session metadata
+                    parse_session_metadata_from_jsonl(data, session)
+
+                    # Parse message (with full content)
+                    msg = parse_message_from_jsonl(data, load_content=True)
+                    if msg:
+                        session.messages.append(msg)
+
+                except json.JSONDecodeError:
+                    continue
+
+    except Exception as e:
+        print(f"Error loading agent session {agent_id}: {e}")
+        return None
+
+    return session
+
+
 def load_sessions(claude_dir: Path = None, load_messages: bool = False) -> Dict[str, Session]:
     """Load all sessions from configured claude_dir
 
@@ -217,87 +435,22 @@ def load_sessions(claude_dir: Path = None, load_messages: bool = False) -> Dict[
                         try:
                             data = json.loads(line)
 
-                            # Extract message data
+                            # Update session metadata
+                            parse_session_metadata_from_jsonl(data, session)
+
+                            # Determine content loading strategy
                             msg_type = data.get('type', '')
+                            should_load_content = load_messages or (msg_type == 'user' and not first_user_message_loaded)
+                            should_load_blocks = load_messages  # Only load blocks if loading all messages
 
-                            # Extract summary if available
-                            if msg_type == 'summary' and session.summary is None:
-                                session.summary = data.get('summary', '')
-                                continue
+                            # Parse message
+                            msg = parse_message_from_jsonl(data, load_content=should_load_content, load_blocks=should_load_blocks)
+                            if msg:
+                                session.messages.append(msg)
 
-                            timestamp_str = data.get('timestamp', '')
-
-                            # Parse timestamp
-                            timestamp = None
-                            if timestamp_str:
-                                try:
-                                    timestamp = datetime.fromisoformat(timestamp_str.replace('Z', '+00:00'))
-
-                                    # Update session start/end times
-                                    if session.start_time is None or timestamp < session.start_time:
-                                        session.start_time = timestamp
-                                    if session.end_time is None or timestamp > session.end_time:
-                                        session.end_time = timestamp
-                                except:
-                                    pass
-
-                            # Extract git branch from first message
-                            if session.git_branch is None:
-                                session.git_branch = data.get('gitBranch')
-
-                            # Extract project path from cwd field
-                            if not session.project_path and 'cwd' in data:
-                                session.project_path = data['cwd']
-
-                            # Create message object
-                            msg = SessionMessage(
-                                uuid=data.get('uuid', ''),
-                                type=msg_type,
-                                timestamp=timestamp_str
-                            )
-
-                            # Extract content and usage from message
-                            if 'message' in data:
-                                message_data = data['message']
-                                msg.role = message_data.get('role')
-
-                                # Always load content for first user message (for description), or all if load_messages is True
-                                should_load_content = load_messages or (msg_type == 'user' and not first_user_message_loaded)
-
-                                if should_load_content:
-                                    content = message_data.get('content')
-                                    if isinstance(content, str):
-                                        msg.content = content
-                                    elif isinstance(content, list):
-                                        # Store all content blocks with their types
-                                        text_parts = []
-                                        for block in content:
-                                            if isinstance(block, dict):
-                                                block_type = block.get('type')
-
-                                                # Store only known block types that we can render
-                                                if block_type in ('text', 'thinking', 'tool_use', 'tool_result', 'file-history-snapshot', 'image'):
-                                                    if load_messages:  # Only store blocks if loading all messages
-                                                        msg.content_blocks.append(normalize_content_block(block))
-
-                                                # Also collect text for legacy content field
-                                                if block_type == 'text':
-                                                    text_parts.append(block.get('text', ''))
-
-                                        msg.content = '\n'.join(text_parts) if text_parts else None
-
-                                    # Mark first user message as loaded
-                                    if msg_type == 'user' and msg.content:
-                                        first_user_message_loaded = True
-
-                                msg.model = message_data.get('model')
-
-                                # Extract token usage
-                                usage = message_data.get('usage', {})
-                                msg.tokens_input = usage.get('input_tokens', 0)
-                                msg.tokens_output = usage.get('output_tokens', 0)
-
-                            session.messages.append(msg)
+                                # Track first user message for description
+                                if msg_type == 'user' and msg.content:
+                                    first_user_message_loaded = True
 
                         except json.JSONDecodeError:
                             continue
@@ -340,55 +493,11 @@ def load_session_messages(session_id: str, project_dir: str, claude_dir: Path = 
 
                 try:
                     data = json.loads(line)
-                    msg_type = data.get('type', '')
 
-                    # Skip summary entries
-                    if msg_type == 'summary':
-                        continue
-
-                    timestamp_str = data.get('timestamp', '')
-
-                    # Create message object
-                    msg = SessionMessage(
-                        uuid=data.get('uuid', ''),
-                        type=msg_type,
-                        timestamp=timestamp_str
-                    )
-
-                    # Extract content and usage from message
-                    if 'message' in data:
-                        message_data = data['message']
-                        msg.role = message_data.get('role')
-
-                        # Extract content (can be string or list)
-                        content = message_data.get('content')
-                        if isinstance(content, str):
-                            msg.content = content
-                        elif isinstance(content, list):
-                            # Store all content blocks with their types
-                            text_parts = []
-                            for block in content:
-                                if isinstance(block, dict):
-                                    block_type = block.get('type')
-
-                                    # Store only known block types that we can render
-                                    if block_type in ('text', 'thinking', 'tool_use', 'tool_result', 'file-history-snapshot', 'image'):
-                                        msg.content_blocks.append(normalize_content_block(block))
-
-                                    # Also collect text for legacy content field
-                                    if block_type == 'text':
-                                        text_parts.append(block.get('text', ''))
-
-                            msg.content = '\n'.join(text_parts) if text_parts else None
-
-                        msg.model = message_data.get('model')
-
-                        # Extract token usage
-                        usage = message_data.get('usage', {})
-                        msg.tokens_input = usage.get('input_tokens', 0)
-                        msg.tokens_output = usage.get('output_tokens', 0)
-
-                    messages.append(msg)
+                    # Parse message with full content and blocks
+                    msg = parse_message_from_jsonl(data, load_content=True, load_blocks=True)
+                    if msg:
+                        messages.append(msg)
 
                 except json.JSONDecodeError:
                     continue
